@@ -4,6 +4,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rbf_ntrip_driver/serial_port.h>
 #include <ntrip/ntrip_client.h>
+#include <memory>
 
 #include <mavros_msgs/msg/rtcm.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
@@ -14,8 +15,12 @@ class NtripDriver : public rclcpp::Node {
 public:
     NtripDriver(const rclcpp::NodeOptions & options);
     ~NtripDriver() override{
-        serial_port_.close();
-        ntrip_client_.Stop();
+        if(serial_port_ptr_ != nullptr){
+            serial_port_ptr_->close();
+        }
+        if(ntrip_client_ptr_ != nullptr){
+            ntrip_client_ptr_->Stop();
+        }
     }
 
     struct Config{
@@ -46,15 +51,15 @@ public:
     };
     Config config_;
 private:
-    SerialPort serial_port_;
-    libntrip::NtripClient ntrip_client_;
+    std::shared_ptr<SerialPort> serial_port_ptr_;
+    std::shared_ptr<libntrip::NtripClient> ntrip_client_ptr_;
     rclcpp::TimerBase::SharedPtr timer_;
 
 
     /*LOAD PARAMETERS*/
     void load_parameters();
     /*INIT NTRIP*/
-    bool init_ntrip();
+    bool run_ntrip();
     void try_to_ntrip_connect();
 
     /*PUBLISHERS*/

@@ -5,13 +5,17 @@ namespace rbf_ntrip_driver {
     NtripDriver::NtripDriver(const rclcpp::NodeOptions& options) : Node("rbf_ntrip_driver", options)
     {
         load_parameters();
-        ntrip_client_.OnReceived(std::bind(&NtripDriver::ntrip_client_callback, this, std::placeholders::_1, std::placeholders::_2));
         
+        // Configure and start the NTRIP client
+        ntrip_client_ptr_ = std::make_shared<libntrip::NtripClient>(config_.ntrip.host, config_.ntrip.port, config_.ntrip.username, config_.ntrip.password, config_.ntrip.mountpoint);
+        ntrip_client_ptr_->OnReceived(std::bind(&NtripDriver::ntrip_client_callback, this, std::placeholders::_1, std::placeholders::_2));
+        
+        // Configure and open the serial port publisher if enabled
         if (config_.serial_port.publish_port_rtcm) {
             try{
-                serial_port_.set_port_name(config_.serial_port.port.c_str());
-                serial_port_.open();
-                serial_port_.configure(config_.serial_port.baudrate, 8, 'N', 1);
+                serial_port_ptr_ = std::make_shared<SerialPort>(config_.serial_port.port.c_str());
+                serial_port_ptr_->open();
+                serial_port_ptr_->configure(config_.serial_port.baudrate, 8, 'N', 1);
             }
             catch (const SerialPortException& e){
                 RCLCPP_ERROR(get_logger(), e.what());
@@ -19,15 +23,18 @@ namespace rbf_ntrip_driver {
             }
         }
 
+        // Create the RTCM publisher if enabled
         if (config_.rtcm_publisher.publish_rtcm) {
             pub_rtcm_ = this->create_publisher<mavros_msgs::msg::RTCM>(config_.rtcm_publisher.topic_name, 10);
         }
 
+        // Subscribe to NAV-SAT-FIX if it's used initially, Otherwise, try to establish the NTRIP connection
         if(config_.ntrip.use_nav_sat_fix_init){
+            RCLCPP_INFO(this->get_logger(), "Waiting for NavSatFix message to initialize NTRIP client...");
             sub_nav_sat_fix_ = this->create_subscription<sensor_msgs::msg::NavSatFix>(
                 config_.ntrip.nav_sat_fix_topic_name, 10, std::bind(&NtripDriver::nav_sat_fix_callback, this, std::placeholders::_1));
         }
-        if(!config_.ntrip.use_nav_sat_fix_init){
+        else{
             try_to_ntrip_connect();
             timer_ = this->create_wall_timer(std::chrono::milliseconds(1000), std::bind(&NtripDriver::timer_callback, this));
         }
@@ -75,40 +82,53 @@ namespace rbf_ntrip_driver {
         RCLCPP_INFO(this->get_logger(),"----------------------------------");
     }
 
-    bool NtripDriver::init_ntrip(){
-        ntrip_client_.Init(config_.ntrip.host, config_.ntrip.port, config_.ntrip.username, config_.ntrip.password, config_.ntrip.mountpoint);
+    // Start the NTRIP client
+    bool NtripDriver::run_ntrip(){
         if(!config_.ntrip.use_nav_sat_fix_init){
-            ntrip_client_.set_location(config_.ntrip.init_lat_position, config_.ntrip.init_lon_position);
+            ntrip_client_ptr_->set_location(config_.ntrip.init_lat_position, config_.ntrip.init_lon_position);
         }
-        return ntrip_client_.Run();
+        return ntrip_client_ptr_->Run();
     }
 
+
+    // Try to establish the NTRIP connection
     void NtripDriver::try_to_ntrip_connect(){
+        constexpr int max_attempts = 10;
         int try_count = 0;
-        while (try_count < 10 && rclcpp::ok()) {
-            if (init_ntrip()) {
+        // Try for a certain number of attempts or until successful
+        while (try_count < max_attempts && rclcpp::ok()) {
+            if (run_ntrip()) {
                 RCLCPP_INFO(get_logger(), "NTRIP client initialized successfully");
-                break;
+                return;
             }
+            // Retry after a delay if failed
             try_count++;
-            RCLCPP_INFO(get_logger(), "Failed to initialize[%d] NTRIP client  , retrying in 1 second", try_count);
+            RCLCPP_INFO(get_logger(), "Failed to initialize NTRIP client [Attempt: %d]. Retrying in 1 second...", try_count);
             rclcpp::sleep_for(std::chrono::seconds(1));
         }
-        if (try_count >= 10) {
-            RCLCPP_ERROR(get_logger(), "Failed to initialize NTRIP client after 10 attempts");
-            rclcpp::shutdown();
-        }
+        // Shutdown if maximum attempts reached or failed to initialize NTRIP client
+        RCLCPP_ERROR(get_logger(), "Failed to initialize NTRIP client after %d attempts. Shutting down...", max_attempts);
+        rclcpp::shutdown();
     }
 
+
+    // Timer callback function
     void NtripDriver::timer_callback()
     {
-        if(!ntrip_client_.service_is_running()){
-            ntrip_client_.Stop();
+        if(!ntrip_client_ptr_->service_is_running()){
+            ntrip_client_ptr_->Stop();
             RCLCPP_ERROR(this->get_logger(), "NTRIP client is not running");
-            try_to_ntrip_connect();
+            if(config_.ntrip.use_nav_sat_fix_init){
+                sub_nav_sat_fix_ = this->create_subscription<sensor_msgs::msg::NavSatFix>(
+                    config_.ntrip.nav_sat_fix_topic_name, 10, std::bind(&NtripDriver::nav_sat_fix_callback, this, std::placeholders::_1));
+            }
+            else{
+                try_to_ntrip_connect();
+            }
         }
     }
 
+    // Callback for data received from the NTRIP client
     void NtripDriver::ntrip_client_callback(char const* _buffer, int _size){
         auto rtcm_msg = mavros_msgs::msg::RTCM();
         rtcm_msg.header.stamp = this->now();
@@ -118,13 +138,14 @@ namespace rbf_ntrip_driver {
             pub_rtcm_->publish(rtcm_msg);
         }
         if(config_.serial_port.publish_port_rtcm){
-            serial_port_.write(_buffer, _size);
+            serial_port_ptr_->write(_buffer, _size);
         }
     }
 
+    // Callback for NAV-SAT-FIX data
     void NtripDriver::nav_sat_fix_callback(const sensor_msgs::msg::NavSatFix::SharedPtr msg){
-        ntrip_client_.set_location(msg->latitude, msg->longitude);
-        RCLCPP_INFO(get_logger(), "NavSatFix message received, NTRIP client initialized successfully");
+        ntrip_client_ptr_->set_location(msg->latitude, msg->longitude);
+        RCLCPP_INFO(get_logger(), "NavSatFix message received, NTRIP client initialized lat = %f long = %f successfully", msg->latitude, msg->longitude);
         try_to_ntrip_connect();
         timer_ = this->create_wall_timer(std::chrono::milliseconds(1000), std::bind(&NtripDriver::timer_callback, this));
         sub_nav_sat_fix_.reset();
