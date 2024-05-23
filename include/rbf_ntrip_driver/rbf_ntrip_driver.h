@@ -8,6 +8,7 @@
 
 #include <mavros_msgs/msg/rtcm.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <diagnostic_updater/diagnostic_updater.hpp>
 
 namespace rbf_ntrip_driver {
 
@@ -53,7 +54,8 @@ public:
 private:
     std::shared_ptr<SerialPort> serial_port_ptr_;
     std::shared_ptr<libntrip::NtripClient> ntrip_client_ptr_;
-    rclcpp::TimerBase::SharedPtr timer_;
+    std::shared_ptr<diagnostic_updater::Updater> diagnostic_updater_;
+    bool nav_sat_fix_received_ = false;
 
 
     /*LOAD PARAMETERS*/
@@ -64,12 +66,13 @@ private:
 
     /*PUBLISHERS*/
     rclcpp::Publisher<mavros_msgs::msg::RTCM>::SharedPtr pub_rtcm_;
+    rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticStatus>::SharedPtr pub_diagnostic_;
 
     /*SUBSCRIBERS*/
     rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr sub_nav_sat_fix_;
 
     /*CALLBACKS*/
-    void timer_callback();
+    void diagnostic_callback(diagnostic_updater::DiagnosticStatusWrapper& stat);
     void ntrip_client_callback(char const* _buffer, int _size);
     void nav_sat_fix_callback(const sensor_msgs::msg::NavSatFix::SharedPtr msg);
 };
