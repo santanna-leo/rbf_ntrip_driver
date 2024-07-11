@@ -166,15 +166,12 @@ namespace libntrip {
         auto tp_beg = std::chrono::steady_clock::now();
         auto tp_end = tp_beg;
         int intv_ms = report_interval_ * 1000;
-        printf("NtripClient service running...\n");
         while (service_is_running_.load()) {
             ret = recv(socket_fd_, buffer.get(), kBufferSize, 0);
             if (ret == 0) {
-                printf("Remote socket close!!!\n");
                 break;
             } else if (ret < 0) {
                 if ((errno != EAGAIN) && (errno != EWOULDBLOCK) && (errno != EINTR)) {
-                    printf("Remote socket error!!!\n");
                     break;
                 }
             } else {
@@ -192,7 +189,6 @@ namespace libntrip {
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        printf("NtripClient service done.\n");
         service_is_running_.store(false);
     }
 

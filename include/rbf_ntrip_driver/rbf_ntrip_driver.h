@@ -75,6 +75,9 @@ private:
     void diagnostic_callback(diagnostic_updater::DiagnosticStatusWrapper& stat);
     void ntrip_client_callback(char const* _buffer, int _size);
     void nav_sat_fix_callback(const sensor_msgs::msg::NavSatFix::SharedPtr msg);
+
+    /*TIMES*/
+    rclcpp::Time ntrip_time_;
 };
 
 } // namespace rbf_ntrip_driver

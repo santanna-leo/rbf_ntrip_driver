@@ -95,11 +95,12 @@ namespace rbf_ntrip_driver {
 
     // Try to establish the NTRIP connection
     void NtripDriver::try_to_ntrip_connect(){
-        constexpr int max_attempts = 10;
+        constexpr int max_attempts = 120;
         int try_count = 0;
         // Try for a certain number of attempts or until successful
         while (try_count < max_attempts && rclcpp::ok()) {
             if (run_ntrip()) {
+                ntrip_time_ = this->now();
                 return;
             }
             // Retry after a delay if failed
@@ -115,7 +116,7 @@ namespace rbf_ntrip_driver {
     void NtripDriver::diagnostic_callback(diagnostic_updater::DiagnosticStatusWrapper& stat)
     {
         if(!ntrip_client_ptr_->service_is_running()){
-            stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "NTRIP Client is not running");
+            stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Try to connect to NTRIP server failed");
             ntrip_client_ptr_->Stop();
             if(config_.ntrip.use_nav_sat_fix_init){
                 if(nav_sat_fix_received_ == false){
@@ -132,13 +133,20 @@ namespace rbf_ntrip_driver {
             }
         }
         else{
-            stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "NTRIP Client is running");
+            if((this->now() - ntrip_time_).seconds() > 3){
+                stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "No RTCM data received");
+                stat.add("Last RTCM data received(second)", (this->now() - ntrip_time_).seconds());
+                ntrip_client_ptr_->Stop();   
+            }
+            else{
+                stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "NTRIP Client is running");
+            }
         }
-
     }
 
     // Callback for data received from the NTRIP client
     void NtripDriver::ntrip_client_callback(char const* _buffer, int _size){
+        ntrip_time_ = this->now();
         auto rtcm_msg = mavros_msgs::msg::RTCM();
         rtcm_msg.header.stamp = this->now();
         rtcm_msg.header.frame_id = config_.rtcm_publisher.frame_id;
