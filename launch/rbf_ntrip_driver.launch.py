@@ -6,7 +6,7 @@ from launch_ros.descriptions import ComposableNode
 
 def generate_launch_description():
     config = os.path.join(
-        get_package_share_directory('rbf_ntrip_driver'),
+        get_package_share_directory('common_sensor_launch'),
         'config',
         'rbf_ntrip_driver.param.yaml'
     )
